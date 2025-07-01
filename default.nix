@@ -6,19 +6,42 @@ let
   sha256 = "sha256-fA1qL7OLafqK1fruve9mZYgAASoEvZe9hPCdf9Mx3eE";
 
   # try to bring in a custom compiler / toolchain
-  glibc_2_31 = (import (pkgs.fetchFromGitHub {
+  nixpkgs-glibc231 = import (pkgs.fetchFromGitHub {
     owner = "NixOS";
     repo = "nixpkgs";
-    rev = "3913f6a514fa3eb29e34af744cc97d0b0f93c35c";
-    sha256 = "sha256-TRATNxmc1sovxMAgcUYQAowAR+wxF4ZFoOOF7A80WiU";
-  }) {}).glibc;
+    rev = "83162ab3b97d0e13b08e28938133381a7515c1e3";
+    sha256 = "sha256-er5nJMIhpTaC7jv9KLuedVNttXvvUC28s2Rrhgd596Y=";
+  }) {system = pkgs.system;};
+  # pull out glibc and make sure its built with the same flags as guix
+  glibc-2_31 = nixpkgs-glibc231.glibc.overrideAttrs (oldAttrs: {
+    # Apply Bitcoin's security configuration flags (guix.scm lines 455-494)
+    configureFlags =
+      (oldAttrs.configureFlags or [])
+      ++ [
+        "--enable-stack-protector=all"
+        "--enable-cet"
+        "--enable-bind-now"
+        "--disable-werror"
+        "--disable-timezone-tools"
+        "--disable-profile"
+        "--build=${pkgs.stdenv.buildPlatform.config}"
+      ];
+  });
 
-  gcc_13_3 = (import (pkgs.fetchFromGitHub {
-    owner = "NixOS";
-    repo = "nixpkgs";
-    rev = "882842d2a908700540d206baa79efb922ac1c33d";
-    sha256 = "sha256-+HBffoSXLhuNJtjxHOZYIyY+PQirlwHKMrir+xIUu4A";
-  }) {}).gcc-unwrapped;
+  base-gcc = pkgs.gcc13;
+  gcc13-hardened = base-gcc.overrideAttrs (oldAttrs: {
+    name = "gcc13-hardened";
+    # Apply Bitcoin's GCC security flags (guix.scm lines 428-453)
+    configureFlags =
+      (oldAttrs.configureFlags or [])
+      ++ [
+        "--enable-initfini-array=yes"
+        "--enable-default-ssp=yes"
+        "--enable-default-pie=yes"
+        "--enable-cet=yes"
+        "--disable-gcov"
+      ];
+  });
 
   getCustomGccStdenv = customGcc: customGlibc: origStdenv: { pkgs, ... }:
   with pkgs; let
@@ -33,7 +56,7 @@ let
     overrideCC origStdenv compilerWrapped;
 
   gcc_13_3_glibc_2_31 = getCustomGccStdenv
-        gcc_13_3 glibc_2_31 pkgs.stdenv pkgs;
+        gcc13-hardened glibc-2_31 pkgs.stdenv pkgs;
   depends = pkgs.callPackage ./depends.nix {
                 inherit version url sha256;
                 stdenv = gcc_13_3_glibc_2_31;
